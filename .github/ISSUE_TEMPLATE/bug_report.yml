@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible problem in Mac Menubar AI Tracker.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Keep this local-only. Do not paste secrets or private paths unless they are already redacted.
+      placeholder: |
+        1. Open the menu bar app
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "14.6"
+  - type: input
+    id: app-version
+    attributes:
+      label: App version or commit
+      placeholder: "0.1.0 or commit hash"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra context
+      description: Screenshots are helpful. Please redact private directory names if needed.
