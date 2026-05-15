@@ -9,6 +9,7 @@ RELEASE_DIR="$ROOT_DIR/dist/release"
 APP_BUNDLE="$RELEASE_DIR/$APP_NAME.app"
 EXECUTABLE="$ROOT_DIR/.build/release/$APP_NAME"
 ZIP_PATH="$RELEASE_DIR/$APP_NAME-$VERSION.zip"
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 
 cd "$ROOT_DIR"
 
@@ -55,7 +56,18 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 
 if command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign - "$APP_BUNDLE"
+    if [[ -z "$SIGN_IDENTITY" ]]; then
+        SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+    fi
+
+    if [[ -n "$SIGN_IDENTITY" ]]; then
+        echo "Signing with $SIGN_IDENTITY"
+        codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+    else
+        echo "Developer ID Application identity not found; using ad-hoc signing for local validation."
+        codesign --force --deep --sign - "$APP_BUNDLE"
+    fi
+
     if command -v xattr >/dev/null 2>&1; then
         xattr -cr "$APP_BUNDLE"
     fi
