@@ -165,39 +165,120 @@ struct SidebarTreeFolderRow: View {
     var level: Int
     var isExpanded: Bool
     var toggle: () -> Void
+    var sortMenu: (() -> AnyView)? = nil
     @Environment(\.trackerAppearance) private var appearance
+    @State private var isHovering = false
 
     var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 6) {
-                Spacer()
-                    .frame(width: CGFloat(level) * 14)
+        HStack(spacing: 6) {
+            Spacer()
+                .frame(width: CGFloat(level) * 14)
 
+            Button(action: toggle) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(appearance.captionSemibold)
                     .frame(width: 12)
-
-                Image(systemName: isExpanded ? "folder.fill" : "folder")
-                    .font(appearance.captionSemibold)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-
-                Text(title)
-                    .font(appearance.subheadlineSemibold)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-
-                Spacer(minLength: 8)
-
-                Text("\(count)")
-                    .font(appearance.captionSemibold)
-                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse" : "Expand")
+
+            Image(systemName: isExpanded ? "folder.fill" : "folder")
+                .font(appearance.captionSemibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(title)
+                .font(appearance.subheadlineSemibold)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: toggle)
+
+            if let sortMenu {
+                sortMenu()
+                    .frame(width: 22)
+                    .opacity(isHovering ? 1 : 0.01)
+            }
+
+            Spacer(minLength: 8)
+
+            Text("\(count)")
+                .font(appearance.captionSemibold)
+                .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .onHover { isHovering = $0 }
+    }
+}
+
+struct DirectorySortMenu: View {
+    var configuration: SidebarNodeSortConfiguration?
+    var defaultFolderSortMode: FolderSortMode?
+    var defaultItemSortMode: SidebarSortMode
+    var itemSectionTitle: String
+    var setConfiguration: (SidebarNodeSortConfiguration?) -> Void
+
+    var body: some View {
+        Menu {
+            Button("Use Global Sort") {
+                setConfiguration(nil)
+            }
+
+            if let defaultFolderSortMode {
+                Section("Folders") {
+                    ForEach(FolderSortMode.allCases) { mode in
+                        Button {
+                            var updated = configuration ?? SidebarNodeSortConfiguration()
+                            updated.folderSortMode = mode
+                            setConfiguration(updated)
+                        } label: {
+                            HStack {
+                                Text(mode.title)
+                                if (configuration?.folderSortMode ?? defaultFolderSortMode) == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section(itemSectionTitle) {
+                ForEach(SidebarSortMode.allCases) { mode in
+                    Button {
+                        var updated = configuration ?? SidebarNodeSortConfiguration()
+                        if defaultFolderSortMode == nil {
+                            updated.itemSortMode = mode
+                        } else {
+                            updated.skillSortMode = mode
+                        }
+                        setConfiguration(updated)
+                    } label: {
+                        HStack {
+                            Text(mode.title)
+                            if activeItemSortMode == mode {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Sort this folder")
+    }
+
+    private var activeItemSortMode: SidebarSortMode {
+        if defaultFolderSortMode == nil {
+            return configuration?.itemSortMode ?? defaultItemSortMode
+        }
+        return configuration?.skillSortMode ?? defaultItemSortMode
     }
 }
 
@@ -209,6 +290,10 @@ struct SkillTreeNodeView: View {
     @Binding var expandedIDs: Set<String>
     @Binding var selectedSkillID: SkillRecord.ID?
     var hideSkill: (SkillRecord) -> Void
+    var sortConfiguration: (String) -> SidebarNodeSortConfiguration?
+    var setSortConfiguration: (String, SidebarNodeSortConfiguration?) -> Void
+    var defaultFolderSortMode: FolderSortMode
+    var defaultSkillSortMode: SidebarSortMode
 
     private var isExpanded: Bool {
         forceExpanded || expandedIDs.contains(node.id) || (autoExpandTopLevel && level == 0)
@@ -244,7 +329,8 @@ struct SkillTreeNodeView: View {
                     count: node.itemCount,
                     level: level,
                     isExpanded: isExpanded,
-                    toggle: toggle
+                    toggle: toggle,
+                    sortMenu: folderSortMenu
                 )
             }
 
@@ -257,11 +343,27 @@ struct SkillTreeNodeView: View {
                         autoExpandTopLevel: autoExpandTopLevel,
                         expandedIDs: $expandedIDs,
                         selectedSkillID: $selectedSkillID,
-                        hideSkill: hideSkill
+                        hideSkill: hideSkill,
+                        sortConfiguration: sortConfiguration,
+                        setSortConfiguration: setSortConfiguration,
+                        defaultFolderSortMode: defaultFolderSortMode,
+                        defaultSkillSortMode: defaultSkillSortMode
                     )
                 }
             }
         }
+    }
+
+    private func folderSortMenu() -> AnyView {
+        AnyView(
+            DirectorySortMenu(
+                configuration: sortConfiguration(node.id),
+                defaultFolderSortMode: defaultFolderSortMode,
+                defaultItemSortMode: defaultSkillSortMode,
+                itemSectionTitle: "Skills",
+                setConfiguration: { setSortConfiguration(node.id, $0) }
+            )
+        )
     }
 
     @ViewBuilder
@@ -384,6 +486,9 @@ struct ProjectTreeRowView: View {
     var toggle: () -> Void
     @Binding var selectedProjectID: ProjectRecord.ID?
     var hideProject: (ProjectRecord) -> Void
+    var sortConfiguration: (String) -> SidebarNodeSortConfiguration?
+    var setSortConfiguration: (String, SidebarNodeSortConfiguration?) -> Void
+    var defaultSortMode: SidebarSortMode
 
     var body: some View {
         if let project = node.project {
@@ -414,9 +519,22 @@ struct ProjectTreeRowView: View {
                 count: node.itemCount,
                 level: level,
                 isExpanded: isExpanded,
-                toggle: toggle
+                toggle: toggle,
+                sortMenu: folderSortMenu
             )
         }
+    }
+
+    private func folderSortMenu() -> AnyView {
+        AnyView(
+            DirectorySortMenu(
+                configuration: sortConfiguration(node.id),
+                defaultFolderSortMode: nil,
+                defaultItemSortMode: defaultSortMode,
+                itemSectionTitle: "Contents",
+                setConfiguration: { setSortConfiguration(node.id, $0) }
+            )
+        )
     }
 
     @ViewBuilder

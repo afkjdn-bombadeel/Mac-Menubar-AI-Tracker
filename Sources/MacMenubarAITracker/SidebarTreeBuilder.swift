@@ -18,20 +18,43 @@ struct SidebarTreeNode: Identifiable, Hashable {
 }
 
 enum SidebarTreeBuilder {
-    static func skillTree(skills: [SkillRecord], roots: [URL]) -> [SidebarTreeNode] {
+    static func skillTree(
+        skills: [SkillRecord],
+        roots: [URL],
+        folderSortMode: FolderSortMode = .alphabeticalAscending,
+        skillSortMode: SidebarSortMode = .alphabeticalAscending,
+        sortOverrides: [String: SidebarNodeSortConfiguration] = [:]
+    ) -> [SidebarTreeNode] {
         buildTree(roots: roots, items: skills.compactMap { skill in
             guard let path = skill.localPath else { return nil }
             return SidebarTreeItem(id: skill.id, path: path, skill: skill, project: nil)
+        }, sort: { parentID in
+            let override = sortOverrides[parentID]
+            return skillNodeComparator(
+                folderSortMode: override?.folderSortMode ?? folderSortMode,
+                skillSortMode: override?.skillSortMode ?? skillSortMode
+            )
         })
     }
 
-    static func projectTree(projects: [ProjectRecord], roots: [URL]) -> [SidebarTreeNode] {
+    static func projectTree(
+        projects: [ProjectRecord],
+        roots: [URL],
+        sortMode: SidebarSortMode = .alphabeticalAscending,
+        sortOverrides: [String: SidebarNodeSortConfiguration] = [:]
+    ) -> [SidebarTreeNode] {
         buildTree(roots: roots, items: projects.map {
             SidebarTreeItem(id: $0.id, path: $0.path, skill: nil, project: $0)
+        }, sort: { parentID in
+            projectNodeComparator(sortMode: sortOverrides[parentID]?.itemSortMode ?? sortMode)
         })
     }
 
-    private static func buildTree(roots: [URL], items: [SidebarTreeItem]) -> [SidebarTreeNode] {
+    private static func buildTree(
+        roots: [URL],
+        items: [SidebarTreeItem],
+        sort: @escaping (String) -> (SidebarTreeNode, SidebarTreeNode) -> Bool
+    ) -> [SidebarTreeNode] {
         var builders: [String: NodeBuilder] = [:]
 
         for item in items {
@@ -50,8 +73,8 @@ enum SidebarTreeBuilder {
         }
 
         return builders.values
-            .map { $0.node() }
-            .sorted(by: sortNodes)
+            .map { $0.node(sort: sort) }
+            .sorted(by: sort(""))
     }
 
     private static func bestRoot(for path: String, roots: [URL]) -> (path: String, title: String)? {
@@ -94,14 +117,91 @@ enum SidebarTreeBuilder {
         return path
     }
 
-    private static func sortNodes(_ lhs: SidebarTreeNode, _ rhs: SidebarTreeNode) -> Bool {
+    private static func skillNodeComparator(
+        folderSortMode: FolderSortMode,
+        skillSortMode: SidebarSortMode
+    ) -> (SidebarTreeNode, SidebarTreeNode) -> Bool {
+        { lhs, rhs in
+            switch (lhs.skill, rhs.skill) {
+            case let (lhsSkill?, rhsSkill?):
+                return skillSortMode.skillComparator(lhsSkill, rhsSkill)
+            case (nil, nil):
+                return compareFolderNodes(lhs, rhs, mode: folderSortMode)
+            default:
+                return sortFoldersBeforeLeaves(lhs, rhs)
+            }
+        }
+    }
+
+    private static func projectNodeComparator(sortMode: SidebarSortMode) -> (SidebarTreeNode, SidebarTreeNode) -> Bool {
+        { lhs, rhs in
+            compareProjectTreeNodes(lhs, rhs, mode: sortMode)
+        }
+    }
+
+    private static func sortFoldersBeforeLeaves(_ lhs: SidebarTreeNode, _ rhs: SidebarTreeNode) -> Bool {
         switch (lhs.isLeaf, rhs.isLeaf) {
         case (false, true):
             return true
         case (true, false):
             return false
         default:
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            return compareTitles(lhs.title, rhs.title, ascending: true)
+        }
+    }
+
+    private static func compareFolderNodes(_ lhs: SidebarTreeNode, _ rhs: SidebarTreeNode, mode: FolderSortMode) -> Bool {
+        switch mode {
+        case .alphabeticalAscending:
+            return compareTitles(lhs.title, rhs.title, ascending: true)
+        case .alphabeticalDescending:
+            return compareTitles(lhs.title, rhs.title, ascending: false)
+        case .countAscending:
+            return lhs.itemCount == rhs.itemCount
+                ? compareTitles(lhs.title, rhs.title, ascending: true)
+                : lhs.itemCount < rhs.itemCount
+        case .countDescending:
+            return lhs.itemCount == rhs.itemCount
+                ? compareTitles(lhs.title, rhs.title, ascending: true)
+                : lhs.itemCount > rhs.itemCount
+        }
+    }
+
+    private static func compareTitles(_ lhs: String, _ rhs: String, ascending: Bool) -> Bool {
+        lhs.localizedCaseInsensitiveCompare(rhs) == (ascending ? .orderedAscending : .orderedDescending)
+    }
+
+    private static func compareProjectTreeNodes(_ lhs: SidebarTreeNode, _ rhs: SidebarTreeNode, mode: SidebarSortMode) -> Bool {
+        switch mode {
+        case .alphabeticalAscending:
+            return compareTitles(lhs.title, rhs.title, ascending: true)
+        case .alphabeticalDescending:
+            return compareTitles(lhs.title, rhs.title, ascending: false)
+        case .createdAscending:
+            return compare(nodeDate(lhs, \.createdAt), nodeDate(rhs, \.createdAt), fallback: lhs.title, rhs.title, ascending: true)
+        case .createdDescending:
+            return compare(nodeDate(lhs, \.createdAt), nodeDate(rhs, \.createdAt), fallback: lhs.title, rhs.title, ascending: false)
+        case .modifiedAscending:
+            return compare(nodeDate(lhs, \.modifiedAt), nodeDate(rhs, \.modifiedAt), fallback: lhs.title, rhs.title, ascending: true)
+        case .modifiedDescending:
+            return compare(nodeDate(lhs, \.modifiedAt), nodeDate(rhs, \.modifiedAt), fallback: lhs.title, rhs.title, ascending: false)
+        }
+    }
+
+    private static func nodeDate(_ node: SidebarTreeNode, _ keyPath: KeyPath<ProjectRecord, Date?>) -> Date? {
+        node.project?[keyPath: keyPath]
+    }
+
+    private static func compare(_ lhsDate: Date?, _ rhsDate: Date?, fallback lhsTitle: String, _ rhsTitle: String, ascending: Bool) -> Bool {
+        switch (lhsDate, rhsDate) {
+        case let (lhs?, rhs?) where lhs != rhs:
+            return ascending ? lhs < rhs : lhs > rhs
+        case (nil, _?):
+            return false
+        case (_?, nil):
+            return true
+        default:
+            return compareTitles(lhsTitle, rhsTitle, ascending: true)
         }
     }
 }
@@ -146,23 +246,14 @@ private struct NodeBuilder {
         children[head] = child
     }
 
-    func node() -> SidebarTreeNode {
+    func node(sort: (String) -> (SidebarTreeNode, SidebarTreeNode) -> Bool) -> SidebarTreeNode {
         SidebarTreeNode(
             id: id,
             title: title,
             displayPath: displayPath,
             skill: skill,
             project: project,
-            children: children.values.map { $0.node() }.sorted(by: { lhs, rhs in
-                switch (lhs.isLeaf, rhs.isLeaf) {
-                case (false, true):
-                    return true
-                case (true, false):
-                    return false
-                default:
-                    return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-                }
-            })
+            children: children.values.map { $0.node(sort: sort) }.sorted(by: sort(id))
         )
     }
 }

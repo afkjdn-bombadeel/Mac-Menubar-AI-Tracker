@@ -17,10 +17,11 @@ struct SidebarTreeBuilderTests {
         #expect(tree.map(\.title) == ["Workspace"])
         let workspace = tree[0]
         #expect(workspace.project?.name == "Workspace")
-        #expect(workspace.children.map(\.title) == ["Group", "Alpha"])
-        #expect(workspace.children[0].children.map(\.title) == ["Subgroup", "Nested"])
-        #expect(workspace.children[0].children[0].children.map(\.title) == ["Deep"])
-        #expect(workspace.children[0].children[0].children[0].project?.name == "Deep")
+        #expect(workspace.children.map(\.title) == ["Alpha", "Group"])
+        let group = workspace.children[1]
+        #expect(group.children.map(\.title) == ["Nested", "Subgroup"])
+        #expect(group.children[1].children.map(\.title) == ["Deep"])
+        #expect(group.children[1].children[0].project?.name == "Deep")
     }
 
     @Test func nestsItemsUnderBroadestConfiguredRoot() {
@@ -60,6 +61,105 @@ struct SidebarTreeBuilderTests {
         #expect(workspace.children[0].children.map(\.title) == ["More", "NestedSkill"])
         #expect(workspace.children[0].children[0].children.map(\.title) == ["DeepSkill"])
         #expect(workspace.children[0].children[0].children[0].skill?.name == "Deep Skill")
+    }
+
+    @Test func skillTreeHonorsSelectedFolderAndSkillSortModes() {
+        let root = URL(fileURLWithPath: "/Workspace")
+        let skills = [
+            skill(name: "Alpha", path: "/Workspace/Small/Alpha"),
+            skill(name: "Beta", path: "/Workspace/Large/Beta"),
+            skill(name: "Zeta", path: "/Workspace/Large/Zeta")
+        ]
+
+        let tree = SidebarTreeBuilder.skillTree(
+            skills: skills,
+            roots: [root],
+            folderSortMode: .countDescending,
+            skillSortMode: .alphabeticalDescending
+        )
+
+        let workspace = tree[0]
+        #expect(workspace.children.map(\.title) == ["Large", "Small"])
+        #expect(workspace.children[0].children.map(\.skill?.name) == ["Zeta", "Beta"])
+    }
+
+    @Test func skillTreeHonorsPerDirectorySortOverrides() {
+        let root = URL(fileURLWithPath: "/Workspace")
+        let skills = [
+            skill(name: "Alpha", path: "/Workspace/Pack/Alpha"),
+            skill(name: "Zeta", path: "/Workspace/Pack/Zeta")
+        ]
+
+        let tree = SidebarTreeBuilder.skillTree(
+            skills: skills,
+            roots: [root],
+            skillSortMode: .alphabeticalAscending,
+            sortOverrides: [
+                "folder:/Workspace/Pack": SidebarNodeSortConfiguration(skillSortMode: .alphabeticalDescending)
+            ]
+        )
+
+        let pack = tree[0].children[0]
+        #expect(pack.title == "Pack")
+        #expect(pack.children.map(\.skill?.name) == ["Zeta", "Alpha"])
+    }
+
+    @Test func projectTreeHonorsSelectedSortMode() {
+        let root = URL(fileURLWithPath: "/Workspace")
+        let projects = [
+            project(name: "Alpha", path: "/Workspace/Alpha"),
+            project(name: "Zeta", path: "/Workspace/Zeta")
+        ]
+
+        let tree = SidebarTreeBuilder.projectTree(
+            projects: projects,
+            roots: [root],
+            sortMode: .alphabeticalDescending
+        )
+
+        #expect(tree[0].children.map(\.project?.name) == ["Zeta", "Alpha"])
+    }
+
+    @Test func projectTreeHonorsPerDirectorySortOverrides() {
+        let root = URL(fileURLWithPath: "/Workspace")
+        let projects = [
+            project(name: "Alpha", path: "/Workspace/Pack/Alpha"),
+            project(name: "Zeta", path: "/Workspace/Pack/Zeta")
+        ]
+
+        let tree = SidebarTreeBuilder.projectTree(
+            projects: projects,
+            roots: [root],
+            sortMode: .alphabeticalAscending,
+            sortOverrides: [
+                "folder:/Workspace/Pack": SidebarNodeSortConfiguration(itemSortMode: .alphabeticalDescending)
+            ]
+        )
+
+        let pack = tree[0].children[0]
+        #expect(pack.title == "Pack")
+        #expect(pack.children.map(\.project?.name) == ["Zeta", "Alpha"])
+    }
+
+    @Test func projectTreeDirectorySortOverridesVisibleChildFolders() {
+        let root = URL(fileURLWithPath: "/Workspace")
+        let projects = [
+            project(name: "Apple Tool", path: "/Workspace/Pack/apple/Apple Tool"),
+            project(name: "Zebra Tool", path: "/Workspace/Pack/zebra/Zebra Tool")
+        ]
+
+        let tree = SidebarTreeBuilder.projectTree(
+            projects: projects,
+            roots: [root],
+            sortMode: .alphabeticalAscending,
+            sortOverrides: [
+                "folder:/Workspace/Pack": SidebarNodeSortConfiguration(itemSortMode: .alphabeticalDescending)
+            ]
+        )
+
+        let pack = tree[0].children[0]
+        #expect(pack.title == "Pack")
+        #expect(pack.children.map(\.title) == ["zebra", "apple"])
     }
 
     private func project(name: String, path: String) -> ProjectRecord {

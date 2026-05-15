@@ -171,6 +171,7 @@ struct ProjectScanner {
     var roots: [URL]
     var skills: [SkillRecord]
     var automations: [AutomationRecord]
+    private let maxTraversalDepth = 8
     private var fileManager: FileManager { .default }
 
     func scan() -> [ProjectRecord] {
@@ -192,25 +193,20 @@ struct ProjectScanner {
     private func projectsUnderRoot(_ root: URL) -> [URL] {
         let normalizedRoot = root.resolvingSymlinksInPath().standardizedFileURL
         var projectURLs = hasMarkerSignal(at: normalizedRoot) ? [normalizedRoot] : []
-        guard let enumerator = fileManager.enumerator(
-            at: normalizedRoot,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsPackageDescendants]
-        ) else {
-            return projectURLs
-        }
+        var stack = childURLs(in: normalizedRoot).map { (url: $0, depth: 1) }
 
-        for case let url as URL in enumerator {
+        while let item = stack.popLast() {
+            let url = item.url
             let directory = isDirectory(url)
             if let projectURL = projectURLForSignal(at: url, isDirectory: directory, under: normalizedRoot) {
                 projectURLs.append(projectURL)
-                if directory {
-                    enumerator.skipDescendants()
-                }
                 continue
             }
             if directory, shouldSkipDirectory(url) {
-                enumerator.skipDescendants()
+                continue
+            }
+            if directory, item.depth < maxTraversalDepth {
+                stack.append(contentsOf: childURLs(in: url).map { (url: $0, depth: item.depth + 1) })
             }
         }
 
@@ -368,25 +364,32 @@ struct ProjectScanner {
     }
 
     private func projectFiles(in url: URL) -> [ProjectFileRecord] {
-        guard let enumerator = fileManager.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsPackageDescendants]
-        ) else {
-            return []
-        }
-
         var records: [ProjectFileRecord] = []
-        for case let itemURL as URL in enumerator {
+        var stack = childURLs(in: url).map { (url: $0, depth: 1) }
+
+        while let item = stack.popLast() {
+            let itemURL = item.url
             let directory = isDirectory(itemURL)
             if directory, shouldSkipDirectory(itemURL) {
-                enumerator.skipDescendants()
                 continue
             }
 
             let name = itemURL.lastPathComponent
             if directory {
-                guard name.hasSuffix(".xcodeproj") || name.hasSuffix(".xcworkspace") else { continue }
+                if name.hasSuffix(".xcodeproj") || name.hasSuffix(".xcworkspace") {
+                    records.append(
+                        ProjectFileRecord(
+                            name: name,
+                            path: normalizedPath(itemURL),
+                            kind: projectFileKind(name)
+                        )
+                    )
+                    continue
+                }
+                if item.depth < maxTraversalDepth {
+                    stack.append(contentsOf: childURLs(in: itemURL).map { (url: $0, depth: item.depth + 1) })
+                }
+                continue
             } else {
                 guard ["AGENTS.md", "CLAUDE.md", "Package.swift", "package.json"].contains(name) else { continue }
             }
@@ -493,6 +496,14 @@ struct ProjectScanner {
         let path = url.resolvingSymlinksInPath().standardizedFileURL.path(percentEncoded: false)
         guard path.count > 1, path.hasSuffix("/") else { return path }
         return String(path.dropLast())
+    }
+
+    private func childURLs(in url: URL) -> [URL] {
+        (try? fileManager.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsPackageDescendants]
+        )) ?? []
     }
 
     private func warningsForProject(path: String, automations: [AutomationRecord], configs: [ConfigRecord]) -> [String] {

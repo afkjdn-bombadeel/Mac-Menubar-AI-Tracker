@@ -23,6 +23,8 @@ struct TrackerPanel: View {
     @AppStorage("sidebarSortMode") private var sortModeRawValue = SidebarSortMode.alphabeticalAscending.rawValue
     @AppStorage("folderSortMode") private var folderSortModeRawValue = FolderSortMode.alphabeticalAscending.rawValue
     @AppStorage("skillSortMode") private var skillSortModeRawValue = SidebarSortMode.alphabeticalAscending.rawValue
+    @AppStorage("skillDirectorySortOverrides") private var skillDirectorySortOverridesStorage = ""
+    @AppStorage("projectDirectorySortOverrides") private var projectDirectorySortOverridesStorage = ""
     @State private var selectedTab: TrackerTab = .skills
     @State private var query = ""
     @State private var selectedSkillID: SkillRecord.ID?
@@ -50,6 +52,14 @@ struct TrackerPanel: View {
 
     private var hiddenProjectIDs: Set<String> {
         decodeSet(hiddenProjectIDsStorage)
+    }
+
+    private var skillDirectorySortOverrides: [String: SidebarNodeSortConfiguration] {
+        decodeSortOverrides(skillDirectorySortOverridesStorage)
+    }
+
+    private var projectDirectorySortOverrides: [String: SidebarNodeSortConfiguration] {
+        decodeSortOverrides(projectDirectorySortOverridesStorage)
     }
 
     private var matchingSkills: [SkillRecord] {
@@ -113,11 +123,22 @@ struct TrackerPanel: View {
     }
 
     private var skillTree: [SidebarTreeNode] {
-        SidebarTreeBuilder.skillTree(skills: filteredSkills, roots: settings.scanRoots)
+        SidebarTreeBuilder.skillTree(
+            skills: filteredSkills,
+            roots: settings.scanRoots,
+            folderSortMode: folderSortMode,
+            skillSortMode: skillSortMode,
+            sortOverrides: skillDirectorySortOverrides
+        )
     }
 
     private var projectTree: [SidebarTreeNode] {
-        SidebarTreeBuilder.projectTree(projects: filteredProjects, roots: settings.scanRoots)
+        SidebarTreeBuilder.projectTree(
+            projects: filteredProjects,
+            roots: settings.scanRoots,
+            sortMode: sortMode,
+            sortOverrides: projectDirectorySortOverrides
+        )
     }
 
     private var visibleProjectNodes: [VisibleSidebarNode] {
@@ -297,14 +318,31 @@ struct TrackerPanel: View {
 
             Menu {
                 if selectedTab == .skills {
-                    ForEach(FolderSortMode.allCases) { mode in
-                        Button {
-                            folderSortModeRawValue = mode.rawValue
-                        } label: {
-                            HStack {
-                                Text(mode.title)
-                                if folderSortMode == mode {
-                                    Image(systemName: "checkmark")
+                    Section("Folders") {
+                        ForEach(FolderSortMode.allCases) { mode in
+                            Button {
+                                folderSortModeRawValue = mode.rawValue
+                            } label: {
+                                HStack {
+                                    Text(mode.title)
+                                    if folderSortMode == mode {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Section("Skills") {
+                        ForEach(SidebarSortMode.allCases) { mode in
+                            Button {
+                                skillSortModeRawValue = mode.rawValue
+                            } label: {
+                                HStack {
+                                    Text(mode.title)
+                                    if skillSortMode == mode {
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
@@ -352,7 +390,11 @@ struct TrackerPanel: View {
                         autoExpandTopLevel: !didCustomizeSkillGroups,
                         expandedIDs: skillExpansionBinding,
                         selectedSkillID: $selectedSkillID,
-                        hideSkill: { hideSkill($0) }
+                        hideSkill: { hideSkill($0) },
+                        sortConfiguration: { skillDirectorySortOverrides[$0] },
+                        setSortConfiguration: setSkillDirectorySort(id:configuration:),
+                        defaultFolderSortMode: folderSortMode,
+                        defaultSkillSortMode: skillSortMode
                     )
                 }
 
@@ -383,31 +425,6 @@ struct TrackerPanel: View {
         }
     }
 
-    private var skillSortMenu: AnyView {
-        AnyView(
-        Menu {
-            ForEach(SidebarSortMode.allCases) { mode in
-                Button {
-                    skillSortModeRawValue = mode.rawValue
-                } label: {
-                    HStack {
-                        Text(mode.title)
-                        if skillSortMode == mode {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 24)
-        .help("Sort skills in folder")
-        )
-    }
-
     private var projectList: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -423,7 +440,10 @@ struct TrackerPanel: View {
                             isExpanded: isProjectNodeExpanded(visibleNode.node, level: visibleNode.level),
                             toggle: { toggleProjectNode(visibleNode.node.id) },
                             selectedProjectID: $selectedProjectID,
-                            hideProject: { hideProject($0) }
+                            hideProject: { hideProject($0) },
+                            sortConfiguration: { projectDirectorySortOverrides[$0] },
+                            setSortConfiguration: setProjectDirectorySort(id:configuration:),
+                            defaultSortMode: sortMode
                         )
                     }
 
@@ -552,6 +572,18 @@ struct TrackerPanel: View {
         hiddenProjectIDsStorage = encodeSet(ids)
     }
 
+    private func setSkillDirectorySort(id: String, configuration: SidebarNodeSortConfiguration?) {
+        var overrides = skillDirectorySortOverrides
+        overrides[id] = configuration
+        skillDirectorySortOverridesStorage = encodeSortOverrides(overrides)
+    }
+
+    private func setProjectDirectorySort(id: String, configuration: SidebarNodeSortConfiguration?) {
+        var overrides = projectDirectorySortOverrides
+        overrides[id] = configuration
+        projectDirectorySortOverridesStorage = encodeSortOverrides(overrides)
+    }
+
     private func moveSearchSelection(direction: Int) {
         switch selectedTab {
         case .skills:
@@ -579,5 +611,23 @@ struct TrackerPanel: View {
 
     private func encodeSet(_ values: Set<String>) -> String {
         values.sorted().joined(separator: "\n")
+    }
+
+    private func decodeSortOverrides(_ value: String) -> [String: SidebarNodeSortConfiguration] {
+        guard let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String: SidebarNodeSortConfiguration].self, from: data)
+        else {
+            return [:]
+        }
+        return decoded
+    }
+
+    private func encodeSortOverrides(_ values: [String: SidebarNodeSortConfiguration]) -> String {
+        guard let data = try? JSONEncoder().encode(values),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return ""
+        }
+        return text
     }
 }

@@ -54,7 +54,7 @@ enum ProjectFilter: String, CaseIterable, Identifiable {
     }
 }
 
-enum SidebarSortMode: String, CaseIterable, Identifiable {
+enum SidebarSortMode: String, Codable, CaseIterable, Identifiable {
     case alphabeticalAscending
     case alphabeticalDescending
     case createdAscending
@@ -123,7 +123,7 @@ enum SidebarSortMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum FolderSortMode: String, CaseIterable, Identifiable {
+enum FolderSortMode: String, Codable, CaseIterable, Identifiable {
     case alphabeticalAscending
     case alphabeticalDescending
     case countAscending
@@ -156,6 +156,12 @@ enum FolderSortMode: String, CaseIterable, Identifiable {
                 : lhs.1.count > rhs.1.count
         }
     }
+}
+
+struct SidebarNodeSortConfiguration: Codable, Equatable, Hashable {
+    var folderSortMode: FolderSortMode? = nil
+    var skillSortMode: SidebarSortMode? = nil
+    var itemSortMode: SidebarSortMode? = nil
 }
 
 enum DateSummaryFormatter {
